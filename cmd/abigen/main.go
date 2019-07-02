@@ -43,6 +43,8 @@ var (
 	pkgFlag  = flag.String("pkg", "", "Package name to generate the binding into")
 	outFlag  = flag.String("out", "", "Output file for the generated binding (default = stdout)")
 	langFlag = flag.String("lang", "go", "Destination language for the bindings (go, java, objc)")
+
+	tplgoFlag = flag.String("tplgo", "", "Custom generated golang source gile template file name")
 )
 
 func main() {
@@ -63,6 +65,17 @@ func main() {
 		fmt.Printf("No destination package specified (--pkg)\n")
 		os.Exit(-1)
 	}
+
+	if *tplgoFlag != "" {
+		tplBytes, err := ioutil.ReadFile(*tplgoFlag)
+		if err != nil {
+			fmt.Printf("Failed to read template file, %v", err)
+			os.Exit(-1)
+		}
+		fmt.Printf("using template(%s) for go, template content bytes len: %d\n", *tplgoFlag, len(tplBytes))
+		_ = bind.UseTemplate(bind.LangGo, string(tplBytes))
+	}
+	
 	var lang bind.Lang
 	switch *langFlag {
 	case "go":

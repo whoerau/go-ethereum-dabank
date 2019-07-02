@@ -55,7 +55,14 @@ var tmplSource = map[Lang]string{
 	LangGo:   tmplSourceGo,
 	LangJava: tmplSourceJava,
 }
-
+func UseTemplate(l Lang, source string) bool{
+	_, ok := tmplSource[l]
+	if !ok {
+		return false
+	}
+	tmplSource[l] = source
+	return true
+}
 // tmplSourceGo is the Go source template use to generate the contract binding
 // based on.
 const tmplSourceGo = `

@@ -1,5 +1,21 @@
 ## Go Ethereum
 
+## 分支特性
+分支名为feature/abigen,保持与master同步（包括upstream）。
+特性概述为，go-ethereum abigen增强，包括但不限于下述特性：
+- `abigen`允许自定义代码模版
+
+## 使用
+```bash
+cd cmd/abigen
+go build -o xabigen
+#然后可以直接使用xabigen,建议的方式是复制/移动该文件到适当的PATH目录下
+#eg: ./xabigen -sol demo.sol -pkg contracts --out demo.go --tplgo tplgo.tpl
+```
+
+
+---
+
 Official Golang implementation of the Ethereum protocol.
 
 [![API Reference](
