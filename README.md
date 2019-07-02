@@ -13,6 +13,8 @@ go build -o xabigen
 #eg: ./xabigen -sol demo.sol -pkg contracts --out demo.go --tplgo tplgo.tpl
 ```
 
+fork改动不多，参考 https://github.com/lemon-sunxiansong/go-ethereum/commit/4b51656928c9d49d32992fd58cf9ebc5c1d2b227
+
 
 ---
 
