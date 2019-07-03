@@ -44,7 +44,7 @@ const (
 // to be used as is in client code, but rather as an intermediate struct which
 // enforces compile time type safety and naming convention opposed to having to
 // manually maintain hard coded strings that break on runtime.
-func Bind(types []string, abis []string, bytecodes []string, pkg string, lang Lang, signals []string) (string, error) {
+func Bind(types []string, abis []string, bytecodes []string, fsigs []map[string]string, pkg string, lang Lang, signals []string) (string, error) {
 	// Process each individual contract requested binding
 	contracts := make(map[string]*tmplContract)
 
@@ -124,6 +124,9 @@ func Bind(types []string, abis []string, bytecodes []string, pkg string, lang La
 			Calls:       calls,
 			Transacts:   transacts,
 			Events:      events,
+		}
+		if len(fsigs) > i {
+			contracts[types[i]].FuncSigs = fsigs[i]
 		}
 	}
 	// Generate the contract template data content and render it
@@ -239,8 +242,7 @@ func bindBasicTypeGo(kind abi.Type) string {
 	case abi.BytesTy:
 		return "[]byte"
 	case abi.FunctionTy:
-		// todo(rjl493456442)
-		return ""
+		return "[24]byte"
 	default:
 		// string, bool types
 		return kind.String()
@@ -299,8 +301,7 @@ func bindBasicTypeJava(kind abi.Type) string {
 	case abi.StringTy:
 		return "String"
 	case abi.FunctionTy:
-		// todo(rjl493456442)
-		return ""
+		return "byte[24]"
 	default:
 		return kind.String()
 	}
