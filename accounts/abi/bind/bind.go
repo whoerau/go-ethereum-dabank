@@ -44,7 +44,7 @@ const (
 // to be used as is in client code, but rather as an intermediate struct which
 // enforces compile time type safety and naming convention opposed to having to
 // manually maintain hard coded strings that break on runtime.
-func Bind(types []string, abis []string, bytecodes []string, pkg string, lang Lang) (string, error) {
+func Bind(types []string, abis []string, bytecodes []string, pkg string, lang Lang, signals []string) (string, error) {
 	// Process each individual contract requested binding
 	contracts := make(map[string]*tmplContract)
 
@@ -139,6 +139,18 @@ func Bind(types []string, abis []string, bytecodes []string, pkg string, lang La
 		"namedtype":     namedType[lang],
 		"capitalise":    capitalise,
 		"decapitalise":  decapitalise,
+
+		"bindmobiletypego": bindMobileTypeGo,
+		"gotypewrapfield":  goTypeWrapField,
+		"iswrapgotype":     isWrapGoType,
+		"issignalexists": func(signal string) bool {
+			for i := 0; i < len(signals); i++ {
+				if signal == signals[i] {
+					return true
+				}
+			}
+			return false
+		},
 	}
 	tmpl := template.Must(template.New("").Funcs(funcs).Parse(tmplSource[lang]))
 	if err := tmpl.Execute(buffer, data); err != nil {
@@ -154,6 +166,53 @@ func Bind(types []string, abis []string, bytecodes []string, pkg string, lang La
 	}
 	// For all others just return as is for now
 	return buffer.String(), nil
+}
+
+type mobileTypeWrap struct {
+	typ   string
+	wrap  string
+	field string
+}
+
+var mobileTypeWraps = []*mobileTypeWrap{
+	&mobileTypeWrap{typ: "*big.Int", wrap: "BigInt", field: "bigint"},
+	&mobileTypeWrap{typ: "common.Address", wrap: "ETHAddress", field: "address"},
+	&mobileTypeWrap{typ: "[]common.Address", wrap: "AddressesWrap", field: "wrap"},
+	&mobileTypeWrap{typ: "[][32]byte", wrap: "Byte32ArrayWrap", field: "wrap"},
+	&mobileTypeWrap{typ: "[]uint8", wrap: "Uint8ArrayWrap", field: "wrap"},
+}
+
+func bindMobileTypeGo(kind abi.Type, asTypeDeclear bool) string {
+	bt := bindType[LangGo](kind)
+	for _, w := range mobileTypeWraps {
+		if w.typ == bt {
+			if asTypeDeclear {
+				return "*" + w.wrap
+			}
+			return "&" + w.wrap
+		}
+	}
+	return bt
+}
+
+func goTypeWrapField(kind abi.Type) string {
+	bt := bindType[LangGo](kind)
+	for _, w := range mobileTypeWraps {
+		if w.typ == bt {
+			return w.field
+		}
+	}
+	return ""
+}
+
+func isWrapGoType(kind abi.Type) bool {
+	bt := bindType[LangGo](kind)
+	for _, w := range mobileTypeWraps {
+		if w.typ == bt {
+			return true
+		}
+	}
+	return false
 }
 
 // bindType is a set of type binders that convert Solidity types to some supported

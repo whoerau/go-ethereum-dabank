@@ -44,7 +44,8 @@ var (
 	outFlag  = flag.String("out", "", "Output file for the generated binding (default = stdout)")
 	langFlag = flag.String("lang", "go", "Destination language for the bindings (go, java, objc)")
 
-	tplgoFlag = flag.String("tplgo", "", "Custom generated golang source gile template file name")
+	tplgoFlag  = flag.String("tplgo", "", "Custom generated golang source gile template file name")
+	signalFlag = flag.String("signal", "", "Custom signal, sperated by comma,can be used in template")
 )
 
 func main() {
@@ -75,7 +76,7 @@ func main() {
 		fmt.Printf("using template(%s) for go, template content bytes len: %d\n", *tplgoFlag, len(tplBytes))
 		_ = bind.UseTemplate(bind.LangGo, string(tplBytes))
 	}
-	
+
 	var lang bind.Lang
 	switch *langFlag {
 	case "go":
@@ -164,7 +165,7 @@ func main() {
 		types = append(types, kind)
 	}
 	// Generate the contract binding
-	code, err := bind.Bind(types, abis, bins, *pkgFlag, lang)
+	code, err := bind.Bind(types, abis, bins, *pkgFlag, lang, strings.Split(*signalFlag, ","))
 	if err != nil {
 		fmt.Printf("Failed to generate ABI binding: %v\n", err)
 		os.Exit(-1)
