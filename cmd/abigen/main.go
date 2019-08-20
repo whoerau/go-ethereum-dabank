@@ -104,8 +104,16 @@ var (
 		Value: "go",
 	}
 
-	tplgoFlag  = flag.String("tplgo", "", "Custom generated golang source gile template file name")
-	signalFlag = flag.String("signal", "", "Custom signal, sperated by comma,can be used in template")
+	//生成go代码时使用的模版
+	tplgoFlag = cli.StringFlag{
+		Name: "tplgo",
+		Usage: "Custom generated golang source file template file name",
+	}
+	//一些信号，模版中用来判断信号是否存在
+	signalFlag = cli.StringFlag{
+		Name: "signal",
+		Usage: "Custom signal, seperated by comma,can be used in template",
+	}
 )
 
 func init() {
@@ -123,6 +131,8 @@ func init() {
 		pkgFlag,
 		outFlag,
 		langFlag,
+		tplgoFlag,
+		signalFlag,
 	}
 	app.Action = utils.MigrateFlags(abigen)
 	cli.CommandHelpTemplate = commandHelperTemplate
@@ -134,13 +144,14 @@ func abigen(c *cli.Context) error {
 		utils.Fatalf("No destination package specified (--pkg)")
 	}
 
-	if *tplgoFlag != "" {
-		tplBytes, err := ioutil.ReadFile(*tplgoFlag)
+	tpl := c.String(tplgoFlag.Name)
+	if tpl != "" {
+		tplBytes, err := ioutil.ReadFile(tpl)
 		if err != nil {
 			fmt.Printf("Failed to read template file, %v", err)
 			os.Exit(-1)
 		}
-		fmt.Printf("using template(%s) for go, template content bytes len: %d\n", *tplgoFlag, len(tplBytes))
+		fmt.Printf("using template(%s) for go, template content bytes len: %d\n", tpl, len(tplBytes))
 		_ = bind.UseTemplate(bind.LangGo, string(tplBytes))
 	}
 
@@ -247,8 +258,7 @@ func abigen(c *cli.Context) error {
 		}
 	}
 	// Generate the contract binding
-	code, 
-	err := bind.Bind(types, abis, bins, sigs, c.GlobalString(pkgFlag.Name), lang, libs, strings.Split(*signalFlag, ","))
+	code, err := bind.Bind(types, abis, bins, sigs, c.GlobalString(pkgFlag.Name), lang, libs, strings.Split(c.String(signalFlag.Name), ","))
 	if err != nil {
 		utils.Fatalf("Failed to generate ABI binding: %v", err)
 	}

@@ -233,8 +233,9 @@ var mobileTypeWraps = []*mobileTypeWrap{
 	&mobileTypeWrap{typ: "[]uint8", wrap: "Uint8ArrayWrap", field: "wrap"},
 }
 
-func bindMobileTypeGo(kind abi.Type, asTypeDeclear bool) string {
-	bt := bindType[LangGo](kind)
+// 绑定到移动端的go类型
+func bindMobileTypeGo(kind abi.Type, structs map[string]*tmplStruct, asTypeDeclear bool) string {
+	bt := bindType[LangGo](kind, structs)
 	for _, w := range mobileTypeWraps {
 		if w.typ == bt {
 			if asTypeDeclear {
@@ -246,8 +247,9 @@ func bindMobileTypeGo(kind abi.Type, asTypeDeclear bool) string {
 	return bt
 }
 
-func goTypeWrapField(kind abi.Type) string {
-	bt := bindType[LangGo](kind)
+// 包装类型里对应的字段
+func goTypeWrapField(kind abi.Type, structs map[string]*tmplStruct) string {
+	bt := bindType[LangGo](kind, structs)
 	for _, w := range mobileTypeWraps {
 		if w.typ == bt {
 			return w.field
@@ -256,8 +258,9 @@ func goTypeWrapField(kind abi.Type) string {
 	return ""
 }
 
-func isWrapGoType(kind abi.Type) bool {
-	bt := bindType[LangGo](kind)
+// 是否是包装过的类型
+func isWrapGoType(kind abi.Type, structs map[string]*tmplStruct) bool {
+	bt := bindType[LangGo](kind, structs)
 	for _, w := range mobileTypeWraps {
 		if w.typ == bt {
 			return true
