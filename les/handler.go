@@ -27,11 +27,11 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/mclock"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
@@ -86,6 +86,7 @@ type BlockChain interface {
 
 type txPool interface {
 	AddRemotes(txs []*types.Transaction) []error
+	AddRemotesSync(txs []*types.Transaction) []error
 	Status(hashes []common.Hash) []core.TxStatus
 }
 
@@ -126,11 +127,14 @@ type ProtocolManager struct {
 
 	// Callbacks
 	synced func() bool
+
+	// Testing fields
+	addTxsSync bool
 }
 
 // NewProtocolManager returns a new ethereum sub protocol manager. The Ethereum sub protocol manages peers capable
 // with the ethereum network.
-func NewProtocolManager(chainConfig *params.ChainConfig, checkpoint *params.TrustedCheckpoint, indexerConfig *light.IndexerConfig, ulcConfig *eth.ULCConfig, client bool, networkId uint64, mux *event.TypeMux, peers *peerSet, blockchain BlockChain, txpool txPool, chainDb ethdb.Database, odr *LesOdr, serverPool *serverPool, registrar *checkpointOracle, quitSync chan struct{}, wg *sync.WaitGroup, synced func() bool) (*ProtocolManager, error) {
+func NewProtocolManager(chainConfig *params.ChainConfig, checkpoint *params.TrustedCheckpoint, indexerConfig *light.IndexerConfig, ulcServers []string, ulcFraction int, client bool, networkId uint64, mux *event.TypeMux, peers *peerSet, blockchain BlockChain, txpool txPool, chainDb ethdb.Database, odr *LesOdr, serverPool *serverPool, registrar *checkpointOracle, quitSync chan struct{}, wg *sync.WaitGroup, synced func() bool) (*ProtocolManager, error) {
 	// Create the protocol manager with the base fields
 	manager := &ProtocolManager{
 		client:      client,
@@ -157,10 +161,14 @@ func NewProtocolManager(chainConfig *params.ChainConfig, checkpoint *params.Trus
 		manager.reqDist = odr.retriever.dist
 	}
 
-	if ulcConfig != nil {
-		manager.ulc = newULC(ulcConfig)
+	if ulcServers != nil {
+		ulc, err := newULC(ulcServers, ulcFraction)
+		if err != nil {
+			log.Warn("Failed to initialize ultra light client", "err", err)
+		} else {
+			manager.ulc = ulc
+		}
 	}
-
 	removePeer := manager.removePeer
 	if disableClientRemovePeer {
 		removePeer = func(id string) {}
@@ -247,11 +255,11 @@ func (pm *ProtocolManager) runPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWrit
 }
 
 func (pm *ProtocolManager) newPeer(pv int, nv uint64, p *p2p.Peer, rw p2p.MsgReadWriter) *peer {
-	var isTrusted bool
-	if pm.isULCEnabled() {
-		isTrusted = pm.ulc.isTrusted(p.ID())
+	var trusted bool
+	if pm.ulc != nil {
+		trusted = pm.ulc.trusted(p.ID())
 	}
-	return newPeer(pv, nv, isTrusted, p, newMeteredMsgWriter(rw))
+	return newPeer(pv, nv, trusted, p, newMeteredMsgWriter(rw))
 }
 
 // handle is the callback invoked to manage the life cycle of a les peer. When
@@ -297,8 +305,14 @@ func (pm *ProtocolManager) handle(p *peer) error {
 		p.Log().Error("Light Ethereum peer registration failed", "err", err)
 		return err
 	}
+	if !pm.client && p.balanceTracker == nil {
+		// add dummy balance tracker for tests
+		p.balanceTracker = &balanceTracker{}
+		p.balanceTracker.init(&mclock.System{}, 1)
+	}
 	connectedAt := time.Now()
 	defer func() {
+		p.balanceTracker = nil
 		pm.removePeer(p.id)
 		connectionTimer.UpdateSince(connectedAt)
 	}()
@@ -393,6 +407,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 	defer msg.Discard()
 
 	var deliverMsg *Msg
+	balanceTracker := p.balanceTracker
 
 	sendResponse := func(reqID, amount uint64, reply *reply, servingTime uint64) {
 		p.responseLock.Lock()
@@ -411,6 +426,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			realCost = pm.server.costTracker.realCost(servingTime, msg.Size, replySize)
 			if amount != 0 {
 				pm.server.costTracker.updateStats(msg.Code, amount, servingTime, realCost)
+				balanceTracker.requestCost(realCost)
 			}
 		} else {
 			realCost = maxCost
@@ -442,7 +458,9 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		if err := msg.Decode(&req); err != nil {
 			return errResp(ErrDecode, "%v: %v", msg, err)
 		}
-
+		if err := req.sanityCheck(); err != nil {
+			return err
+		}
 		update, size := req.Update.decode()
 		if p.rejectUpdate(size) {
 			return errResp(ErrRequestRejected, "")
@@ -1039,7 +1057,12 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 					hash := tx.Hash()
 					stats[i] = pm.txStatus(hash)
 					if stats[i].Status == core.TxStatusUnknown {
-						if errs := pm.txpool.AddRemotes([]*types.Transaction{tx}); errs[0] != nil {
+						addFn := pm.txpool.AddRemotes
+						// Add txs synchronously for testing purpose
+						if pm.addTxsSync {
+							addFn = pm.txpool.AddRemotesSync
+						}
+						if errs := addFn([]*types.Transaction{tx}); errs[0] != nil {
 							stats[i].Error = errs[0].Error()
 							continue
 						}
@@ -1106,7 +1129,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 		p.freezeServer(true)
 		pm.retriever.frozen(p)
-		p.Log().Warn("Service stopped")
+		p.Log().Debug("Service stopped")
 
 	case ResumeMsg:
 		if pm.odr == nil {
@@ -1118,7 +1141,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 		p.fcServer.ResumeFreeze(bv)
 		p.freezeServer(false)
-		p.Log().Warn("Service resumed")
+		p.Log().Debug("Service resumed")
 
 	default:
 		p.Log().Trace("Received unknown message", "code", msg.Code)
@@ -1193,14 +1216,6 @@ func (pm *ProtocolManager) txStatus(hash common.Hash) light.TxStatus {
 		}
 	}
 	return stat
-}
-
-// isULCEnabled returns true if we can use ULC
-func (pm *ProtocolManager) isULCEnabled() bool {
-	if pm.ulc == nil || len(pm.ulc.trustedKeys) == 0 {
-		return false
-	}
-	return true
 }
 
 // downloaderPeerNotify implements peerSetNotify

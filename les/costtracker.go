@@ -1,4 +1,4 @@
-// Copyright 2016 The go-ethereum Authors
+// Copyright 2019 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -9,7 +9,7 @@
 // The go-ethereum library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU Lesser General Public License for more detailct.
+// GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
@@ -139,11 +139,11 @@ func newCostTracker(db ethdb.Database, config *eth.Config) (*costTracker, uint64
 		reqInfoCh:  make(chan reqInfo, 100),
 		utilTarget: utilTarget,
 	}
-	if config.LightBandwidthIn > 0 {
-		ct.inSizeFactor = utilTarget / float64(config.LightBandwidthIn)
+	if config.LightIngress > 0 {
+		ct.inSizeFactor = utilTarget / float64(config.LightIngress)
 	}
-	if config.LightBandwidthOut > 0 {
-		ct.outSizeFactor = utilTarget / float64(config.LightBandwidthOut)
+	if config.LightEgress > 0 {
+		ct.outSizeFactor = utilTarget / float64(config.LightEgress)
 	}
 	if makeCostStats {
 		ct.stats = make(map[uint64][]uint64)

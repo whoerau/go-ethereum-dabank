@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/les/flowcontrol"
 	"github.com/ethereum/go-ethereum/light"
 	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 )
@@ -105,27 +107,48 @@ type peer struct {
 	updateTime     mclock.AbsTime
 	frozen         uint32 // 1 if client is in frozen state
 
-	fcClient *flowcontrol.ClientNode // nil if the peer is server only
-	fcServer *flowcontrol.ServerNode // nil if the peer is client only
-	fcParams flowcontrol.ServerParams
-	fcCosts  requestCostTable
+	fcClient       *flowcontrol.ClientNode // nil if the peer is server only
+	fcServer       *flowcontrol.ServerNode // nil if the peer is client only
+	fcParams       flowcontrol.ServerParams
+	fcCosts        requestCostTable
+	balanceTracker *balanceTracker // set by clientPool.connect, used and removed by ProtocolManager.handle
 
-	isTrusted               bool
-	isOnlyAnnounce          bool
+	trusted                 bool
+	onlyAnnounce            bool
 	chainSince, chainRecent uint64
 	stateSince, stateRecent uint64
 }
 
-func newPeer(version int, network uint64, isTrusted bool, p *p2p.Peer, rw p2p.MsgReadWriter) *peer {
+func newPeer(version int, network uint64, trusted bool, p *p2p.Peer, rw p2p.MsgReadWriter) *peer {
 	return &peer{
-		Peer:      p,
-		rw:        rw,
-		version:   version,
-		network:   network,
-		id:        fmt.Sprintf("%x", p.ID().Bytes()),
-		isTrusted: isTrusted,
-		errCh:     make(chan error, 1),
+		Peer:    p,
+		rw:      rw,
+		version: version,
+		network: network,
+		id:      peerIdToString(p.ID()),
+		trusted: trusted,
+		errCh:   make(chan error, 1),
 	}
+}
+
+// peerIdToString converts enode.ID to a string form
+func peerIdToString(id enode.ID) string {
+	return fmt.Sprintf("%x", id.Bytes())
+}
+
+// freeClientId returns a string identifier for the peer. Multiple peers with the
+// same identifier can not be connected in free mode simultaneously.
+func (p *peer) freeClientId() string {
+	if addr, ok := p.RemoteAddr().(*net.TCPAddr); ok {
+		if addr.IP.IsLoopback() {
+			// using peer id instead of loopback ip address allows multiple free
+			// connections from local machine to own server
+			return p.id
+		} else {
+			return addr.IP.String()
+		}
+	}
+	return p.id
 }
 
 // rejectUpdate returns true if a parameter update has to be rejected because
@@ -591,7 +614,7 @@ func (p *peer) Handshake(td *big.Int, head common.Hash, headNum uint64, genesis 
 	} else {
 		//on client node
 		p.announceType = announceTypeSimple
-		if p.isTrusted {
+		if p.trusted {
 			p.announceType = announceTypeSigned
 		}
 		send = send.add("announceType", p.announceType)
@@ -652,22 +675,22 @@ func (p *peer) Handshake(td *big.Int, head common.Hash, headNum uint64, genesis 
 	} else {
 		//mark OnlyAnnounce server if "serveHeaders", "serveChainSince", "serveStateSince" or "txRelay" fields don't exist
 		if recv.get("serveChainSince", &p.chainSince) != nil {
-			p.isOnlyAnnounce = true
+			p.onlyAnnounce = true
 		}
 		if recv.get("serveRecentChain", &p.chainRecent) != nil {
 			p.chainRecent = 0
 		}
 		if recv.get("serveStateSince", &p.stateSince) != nil {
-			p.isOnlyAnnounce = true
+			p.onlyAnnounce = true
 		}
 		if recv.get("serveRecentState", &p.stateRecent) != nil {
 			p.stateRecent = 0
 		}
 		if recv.get("txRelay", nil) != nil {
-			p.isOnlyAnnounce = true
+			p.onlyAnnounce = true
 		}
 
-		if p.isOnlyAnnounce && !p.isTrusted {
+		if p.onlyAnnounce && !p.trusted {
 			return errResp(ErrUselessPeer, "peer cannot serve requests")
 		}
 
@@ -689,7 +712,7 @@ func (p *peer) Handshake(td *big.Int, head common.Hash, headNum uint64, genesis 
 		recv.get("checkpoint/value", &p.checkpoint)
 		recv.get("checkpoint/registerHeight", &p.checkpointNumber)
 
-		if !p.isOnlyAnnounce {
+		if !p.onlyAnnounce {
 			for msgCode := range reqAvgTimeCost {
 				if p.fcCosts[msgCode] == nil {
 					return errResp(ErrUselessPeer, "peer does not support message %d", msgCode)
