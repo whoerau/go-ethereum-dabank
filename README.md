@@ -228,7 +228,7 @@ aware of and agree upon. This consists of a small JSON file (e.g. call it `genes
 ```json
 {
   "config": {
-    "chainId": 0,
+    "chainId": <arbitrary positive integer>,
     "homesteadBlock": 0,
     "eip150Block": 0,
     "eip155Block": 0,
@@ -251,8 +251,8 @@ aware of and agree upon. This consists of a small JSON file (e.g. call it `genes
 
 The above fields should be fine for most purposes, although we'd recommend changing
 the `nonce` to some random value so you prevent unknown remote nodes from being able
-to connect to you. If you'd like to pre-fund some accounts for easier testing, you can
-populate the `alloc` field with account configs:
+to connect to you. If you'd like to pre-fund some accounts for easier testing, create
+the accounts and populate the `alloc` field with their addresses.
 
 ```json
 "alloc": {
@@ -321,7 +321,7 @@ ones either). To start a `geth` instance for mining, run it with all your usual 
 by:
 
 ```shell
-$ geth <usual-flags> --mine --minerthreads=1 --etherbase=0x0000000000000000000000000000000000000000
+$ geth <usual-flags> --mine --miner.threads=1 --etherbase=0x0000000000000000000000000000000000000000
 ```
 
 Which will start mining blocks and transactions on a single CPU thread, crediting all
