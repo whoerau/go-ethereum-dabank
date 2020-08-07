@@ -22,6 +22,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -73,6 +74,8 @@ type freezer struct {
 
 	tables       map[string]*freezerTable // Data tables for storing everything
 	instanceLock fileutil.Releaser        // File-system lock to prevent double opens
+	quit         chan struct{}
+	closeOnce    sync.Once
 }
 
 // newFreezer creates a chain freezer that moves ancient chain data into
@@ -101,6 +104,7 @@ func newFreezer(datadir string, namespace string) (*freezer, error) {
 	freezer := &freezer{
 		tables:       make(map[string]*freezerTable),
 		instanceLock: lock,
+		quit:         make(chan struct{}),
 	}
 	for name, disableSnappy := range freezerNoSnappy {
 		table, err := newTable(datadir, name, readMeter, writeMeter, sizeGauge, disableSnappy)
@@ -127,14 +131,17 @@ func newFreezer(datadir string, namespace string) (*freezer, error) {
 // Close terminates the chain freezer, unmapping all the data files.
 func (f *freezer) Close() error {
 	var errs []error
-	for _, table := range f.tables {
-		if err := table.Close(); err != nil {
+	f.closeOnce.Do(func() {
+		f.quit <- struct{}{}
+		for _, table := range f.tables {
+			if err := table.Close(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if err := f.instanceLock.Release(); err != nil {
 			errs = append(errs, err)
 		}
-	}
-	if err := f.instanceLock.Release(); err != nil {
-		errs = append(errs, err)
-	}
+	})
 	if errs != nil {
 		return fmt.Errorf("%v", errs)
 	}
@@ -218,7 +225,7 @@ func (f *freezer) AppendAncient(number uint64, hash, header, body, receipts, td 
 	return nil
 }
 
-// Truncate discards any recent data above the provided threshold number.
+// TruncateAncients discards any recent data above the provided threshold number.
 func (f *freezer) TruncateAncients(items uint64) error {
 	if atomic.LoadUint64(&f.frozen) <= items {
 		return nil
@@ -232,7 +239,7 @@ func (f *freezer) TruncateAncients(items uint64) error {
 	return nil
 }
 
-// sync flushes all data tables to disk.
+// Sync flushes all data tables to disk.
 func (f *freezer) Sync() error {
 	var errs []error
 	for _, table := range f.tables {
@@ -254,46 +261,61 @@ func (f *freezer) Sync() error {
 func (f *freezer) freeze(db ethdb.KeyValueStore) {
 	nfdb := &nofreezedb{KeyValueStore: db}
 
+	backoff := false
 	for {
+		select {
+		case <-f.quit:
+			log.Info("Freezer shutting down")
+			return
+		default:
+		}
+		if backoff {
+			select {
+			case <-time.NewTimer(freezerRecheckInterval).C:
+				backoff = false
+			case <-f.quit:
+				return
+			}
+		}
 		// Retrieve the freezing threshold.
 		hash := ReadHeadBlockHash(nfdb)
 		if hash == (common.Hash{}) {
 			log.Debug("Current full block hash unavailable") // new chain, empty database
-			time.Sleep(freezerRecheckInterval)
+			backoff = true
 			continue
 		}
 		number := ReadHeaderNumber(nfdb, hash)
 		switch {
 		case number == nil:
 			log.Error("Current full block number unavailable", "hash", hash)
-			time.Sleep(freezerRecheckInterval)
+			backoff = true
 			continue
 
-		case *number < params.ImmutabilityThreshold:
-			log.Debug("Current full block not old enough", "number", *number, "hash", hash, "delay", params.ImmutabilityThreshold)
-			time.Sleep(freezerRecheckInterval)
+		case *number < params.FullImmutabilityThreshold:
+			log.Debug("Current full block not old enough", "number", *number, "hash", hash, "delay", params.FullImmutabilityThreshold)
+			backoff = true
 			continue
 
-		case *number-params.ImmutabilityThreshold <= f.frozen:
+		case *number-params.FullImmutabilityThreshold <= f.frozen:
 			log.Debug("Ancient blocks frozen already", "number", *number, "hash", hash, "frozen", f.frozen)
-			time.Sleep(freezerRecheckInterval)
+			backoff = true
 			continue
 		}
 		head := ReadHeader(nfdb, hash, *number)
 		if head == nil {
 			log.Error("Current full block unavailable", "number", *number, "hash", hash)
-			time.Sleep(freezerRecheckInterval)
+			backoff = true
 			continue
 		}
 		// Seems we have data ready to be frozen, process in usable batches
-		limit := *number - params.ImmutabilityThreshold
+		limit := *number - params.FullImmutabilityThreshold
 		if limit-f.frozen > freezerBatchLimit {
 			limit = f.frozen + freezerBatchLimit
 		}
 		var (
 			start    = time.Now()
 			first    = f.frozen
-			ancients = make([]common.Hash, 0, limit)
+			ancients = make([]common.Hash, 0, limit-f.frozen)
 		)
 		for f.frozen < limit {
 			// Retrieves all the components of the canonical block
@@ -369,7 +391,7 @@ func (f *freezer) freeze(db ethdb.KeyValueStore) {
 
 		// Avoid database thrashing with tiny writes
 		if f.frozen-first < freezerBatchLimit {
-			time.Sleep(freezerRecheckInterval)
+			backoff = true
 		}
 	}
 }
