@@ -259,7 +259,7 @@ type mobileTypeWrap struct {
 
 var mobileTypeWraps = []*mobileTypeWrap{
 	&mobileTypeWrap{typ: "*big.Int", wrap: "BigInt", field: "bigint"},
-	&mobileTypeWrap{typ: "common.Address", wrap: "ETHAddress", field: "address"},
+	&mobileTypeWrap{typ: "common.Address", wrap: "Address", field: "address"},
 	&mobileTypeWrap{typ: "[]common.Address", wrap: "AddressesWrap", field: "wrap"},
 	&mobileTypeWrap{typ: "[][32]byte", wrap: "Byte32ArrayWrap", field: "wrap"},
 	&mobileTypeWrap{typ: "[]uint8", wrap: "Uint8ArrayWrap", field: "wrap"},
